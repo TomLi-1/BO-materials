@@ -1,11 +1,15 @@
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+import warnings
+from botorch.optim.fit import OptimizationWarning
 
 from src.data_loader import load_formation_energy
 from src.featurizer import MatminerTransformer, make_magpie_featurizer
 from src.surrogate import OptimizerParameters
 from src.bo_loop import bayes_optimize
 import torch
+
+warnings.filterwarnings("ignore", category=OptimizationWarning)
 
 def main():
     # 1) Load Matbench formation-energy data

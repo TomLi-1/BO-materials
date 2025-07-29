@@ -44,13 +44,25 @@ def select_features(X: np.ndarray,
 import torch
 from botorch.models import SingleTaskGP
 from botorch.fit import fit_gpytorch_model
+from botorch.models.transforms.input import Normalize
+from botorch.models.transforms.outcome import Standardize
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
 
 def fit_surrogate(train_X: torch.Tensor,
                   train_y: torch.Tensor):
     # 1) instantiate
-    gp  = SingleTaskGP(train_X, train_y.unsqueeze(-1))
+    # compute dims
+    feat_dim   = train_X.size(-1)                    # e.g. 132 features
+    output_dim = train_y.unsqueeze(-1).size(-1)      # always 1 here
+
+    # pass ints, not Tensors, into the transforms
+    gp = SingleTaskGP(
+        train_X,
+        train_y.unsqueeze(-1),
+        input_transform=Normalize(feat_dim),
+        outcome_transform=Standardize(output_dim),
+    )
     mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
     # 2) fit in place
     fit_gpytorch_model(mll)
@@ -61,6 +73,6 @@ def make_acquisition(gp, best_f: torch.Tensor, acq_fun: str):
     if acq_fun == "EI":
         return ExpectedImprovement(model=gp, best_f=best_f)
     elif acq_fun == "UCB":
-        return UpperConfidenceBound(model=gp, beta=0.2)
+        return UpperConfidenceBound(model=gp, beta=5.0)
     else:
         raise ValueError(f"Unknown acq_fun {acq_fun}")

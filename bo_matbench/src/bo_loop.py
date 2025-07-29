@@ -7,46 +7,64 @@ except ImportError:
     from botorch.optim.optimize import optimize_acqf
 
 
-def bayes_optimize(X_init: torch.Tensor, y_init: torch.Tensor, X_pool: torch.Tensor, y_pool: torch.Tensor, params: OptimizerParameters,) -> tuple[torch.Tensor, torch.Tensor]:
-    # 1) Feature‐selection
-    Xfs, feat_idx = select_features(
-        X_init.numpy(), y_init.numpy(),
-        method=params.sparsity_method,
-        k=params.num_sparsity_feats
-    )
-    Xfs = torch.tensor(Xfs, dtype=torch.float32)
-    y  = torch.tensor(y_init, dtype=torch.float32)
+def bayes_optimize(
+    X_init: torch.Tensor,
+    y_init: torch.Tensor,
+    X_pool: torch.Tensor,
+    y_pool: torch.Tensor,
+    params: OptimizerParameters,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # convert y_init to a FloatTensor
+    y0 = torch.as_tensor(y_init, dtype=torch.float32)
 
-    # 2) Initialize data
-    data_X, data_y = Xfs.clone(), y.clone()
+    # 0) INITIALIZE the “seen” dataset
+    data_X = X_init.clone()    # shape (init_budget, n_feats)
+    data_y = y0.clone()        # shape (init_budget,)
 
-    # 3) BO main loop
+    # 1) BO MAIN LOOP
     for it in range(params.total_sample_budget - params.initialization_budget):
-        gp  = fit_surrogate(data_X, data_y)
+        # 1a) (Re-)select k sparse features on the CURRENT data_X, data_y
+        Xfs_np, feat_idx = select_features(
+            data_X.numpy(),
+            data_y.numpy(),
+            method=params.sparsity_method,
+            k=params.num_sparsity_feats,
+        )
+        Xfs = torch.tensor(Xfs_np, dtype=torch.float32)
+
+        # 1b) Fit the GP in that subspace
+        gp = fit_surrogate(Xfs, data_y)
+
+        # 1c) Make your acquisition function
         acq = make_acquisition(gp, best_f=data_y.max(), acq_fun=params.acq_fun)
 
-        # propose in the *full* feature‐space, then select nearest in pool:
+        # 1d) Propose one new point in feature‐space
+        bounds = torch.stack([Xfs.min(dim=0).values,
+                              Xfs.max(dim=0).values])
         cand_feat, _ = optimize_acqf(
             acq,
-            bounds=torch.stack([
-                data_X.min(dim=0).values,
-                data_X.max(dim=0).values
-            ]),
-            q=1, num_restarts=5, raw_samples=20,
+            bounds=bounds,
+            q=1,
+            num_restarts=10,
+            raw_samples=100,   # draw 20 random starting points for the optimizer
         )
+        if cand_feat.dtype != X_pool.dtype:
+            cand_feat = cand_feat.to(X_pool.dtype)
 
-        # find nearest neighbor in X_pool (pre‐featurized full‐X)
-        distances = torch.cdist(
-            cand_feat, X_pool[:, feat_idx], p=2
-        ).squeeze(0)
-        idx_near  = torch.argmin(distances).item()
+        # 1e) Snap back to the nearest structure in your pool
+        #      only compare on the selected features
+        dists    = torch.cdist(cand_feat, X_pool[:, feat_idx])
+        idx_near = torch.argmin(dists).item()
 
-        # fetch true (unseen) y value for that structure
-        new_Xf = X_pool[idx_near, feat_idx].unsqueeze(0)
+        # 1f) Fetch its true y and remove it from the pool
+        new_Xf = X_pool[idx_near].unsqueeze(0)
         new_y  = y_pool[idx_near].unsqueeze(0)
+        X_pool = torch.cat([X_pool[:idx_near], X_pool[idx_near+1:]], dim=0)
+        y_pool = torch.cat([y_pool[:idx_near], y_pool[idx_near+1:]], dim=0)
 
+        # 1g) Append to your “seen” data
         data_X = torch.cat([data_X, new_Xf], dim=0)
-        data_y = torch.cat([data_y, new_y], dim=0)
+        data_y = torch.cat([data_y, new_y],  dim=0)
 
         print(f"Iter {it:02d} — best e_form = {data_y.max():.4f}")
 
