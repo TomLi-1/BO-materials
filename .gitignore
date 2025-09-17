@@ -1,0 +1,53 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code specific
+.claude/
+CLAUDE.md
+
+# Large data files
+*.pkl
+*.h5
+*.hdf5
+
+# Experiment outputs (optional - you may want to track some)
+*.png
+*.pdf
+*results.json
+*summary.txt
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment files
+.env
+.venv/
+env/
+venv/
+
+# OS generated files
+Icon?
+.documentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent

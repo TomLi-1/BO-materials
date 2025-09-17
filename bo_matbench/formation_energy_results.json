@@ -1,0 +1,25 @@
+{
+  "date": "2025-09-06",
+  "objective": "minimize_formation_energy",
+  "dataset_size": 132752,
+  "data_range": [
+    -4.612092018127441,
+    2.4995498657226562
+  ],
+  "data_mean": -1.4079183340072632,
+  "data_std": 1.1631332635879517,
+  "bo_found_best": -4.008345603942871,
+  "true_global_min": -4.612092018127441,
+  "gap_to_optimum": 0.6037464141845703,
+  "gap_percentage": 13.090511026484197,
+  "global_ranking": 445,
+  "total_materials": 132752,
+  "bo_config": {
+    "initialization_budget": 10,
+    "total_sample_budget": 200,
+    "acquisition_function": "EI",
+    "sparsity_method": "MI",
+    "num_sparsity_feats": 30
+  },
+  "model_evaluation": {
+    "reduced_features_mae": 

@@ -1,0 +1,61 @@
+# Multi-Objective BO Configuration for Materials Discovery
+
+experiment_type: "bandgap_target"  # Options: "formation_energy", "bandgap_target", "multi_objective"
+
+# Dataset configuration
+dataset:
+  primary: 
+    name: "matbench_expt_gap"  # Experimental bandgap dataset
+    target_column: "gap expt"
+    task_type: "regression"
+    
+  secondary:  # Optional classification task
+    enabled: true
+    name: "spacegroup_classification" 
+    target_column: "spacegroup"
+    task_type: "classification"
+    priority: 0.3  # Weight relative to primary task (0.0-1.0)
+
+# Target configuration for bandgap optimization
+bandgap_target:
+  value: 1.5  # eV - optimal for solar applications
+  tolerance: 0.2  # ±0.2 eV acceptable range
+  semiconductor_type: "direct"  # "direct", "indirect", or "any"
+
+# Featurization
+featurizer:
+  composition_features:
+    magpie: true
+    matscholar: false
+    
+  structure_features:  # If structures available
+    sine_coulomb_matrix: false
+    orbital_field_matrix: false
+    
+# Multi-objective BO parameters
+bo:
+  total_sample_budget: 200
+  initialization_budget: 15
+  
+  objectives:
+    primary:
+      name: "bandgap_target"
+      weight: 0.7
+      acquisition: "EI_target"  # Expected improvement toward target
+      
+    secondary:
+      name: "spacegroup_classification"
+      weight: 0.3
+      acquisition: "entropy_reduction"  # Maximize information gain
+
+  feature_selection:
+    method: "MI"  # "MI", "LASSO", "NONE"
+    num_features: 40  # Slightly more for multi-objective
+    separate_per_objective: false
+
+# Semiconductor bandgap ranges for reference
+semiconductor_ranges:
+  solar_optimal: [1.3, 1.7]     # Single junction solar cells
+  led_visible: [1.8, 3.1]       # Visible light LEDs  
+  infrared: [0.1, 1.2]          # Infrared applications
+  wide_bandgap: [3.0, 6.0]      # Power electronics, UV

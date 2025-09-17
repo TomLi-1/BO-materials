@@ -36,7 +36,8 @@ def bayes_optimize(
         gp = fit_surrogate(Xfs, data_y)
 
         # 1c) Make your acquisition function
-        acq = make_acquisition(gp, best_f=data_y.max(), acq_fun=params.acq_fun)
+        # For formation energy, we want to MINIMIZE (find most stable materials)
+        acq = make_acquisition(gp, best_f=data_y.min(), acq_fun=params.acq_fun, minimize=True)
 
         # 1d) Propose one new point in feature‐space
         bounds = torch.stack([Xfs.min(dim=0).values,
