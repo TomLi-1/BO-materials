@@ -1,0 +1,21 @@
+# Additional dependencies for GNN embeddings
+# Install with: pip install -r requirements-gnn.txt
+
+# Optional GNN packages (install if available/needed)
+# torch-geometric>=2.0.0  # For advanced graph neural networks
+# torch-scatter>=2.0.0    # Required by torch-geometric
+# torch-sparse>=0.6.0     # Required by torch-geometric
+# pyg-lib                 # PyTorch Geometric C++ library
+
+# MEGNet integration (if available)
+# megnet>=1.3.0          # MEGNet for materials property prediction
+# tensorflow>=2.8.0      # Required by MEGNet
+
+# Core dependencies (should already be installed)
+torch>=1.9.0
+numpy>=1.21.0
+pymatgen>=2023.0.0
+matminer>=0.9.0
+
+# Note: GNN featurizer falls back gracefully if optional packages are not available
+# It will use elemental property embeddings instead of advanced GNN features

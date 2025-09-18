@@ -9,6 +9,7 @@ from botorch.optim.fit import OptimizationWarning
 # Import our multi-objective modules
 from src.multi_objective_data_loader import load_bandgap_dataset, create_classification_targets
 from src.featurizer import MatminerTransformer, make_magpie_featurizer
+from src.gnn_featurizer import make_gnn_featurizer
 from src.multi_objective_surrogate import (
     MultiObjectiveParameters, evaluate_bandgap_targeting, 
     plot_bandgap_targeting_analysis, fit_surrogate_target_based
@@ -33,7 +34,11 @@ def main():
     # Quick test configuration
     bandgap_target = 1.5
     bandgap_tolerance = 0.2
+    featurizer_type = "magpie"  # Options: "magpie", "gnn"
+    # featurizer_type = "gnn"  # Uncomment to test GNN embeddings
+    
     print(f"🎯 Target: {bandgap_target} ± {bandgap_tolerance} eV (optimal for solar cells)")
+    print(f"🔧 Using featurizer: {featurizer_type}")
     
     # 1) Load smaller dataset sample
     print(f"\n📊 Loading dataset (quick test - first 500 materials)...")
@@ -59,22 +64,38 @@ def main():
         print(f"❌ Error loading dataset: {e}")
         return
     
-    # 2) Featurize
-    print(f"\n🧬 Featurizing with Magpie descriptors...")
-    transformer = MatminerTransformer(make_magpie_featurizer())
+    # 2) Featurize with comparison
+    print(f"\n🧬 Featurizing with {featurizer_type} descriptors...")
     
     try:
-        print(f"   Featurizing {len(X_train)} training samples...")
-        X_train_feats = transformer.transform(X_train)
-        print(f"   Featurizing {len(X_test)} test samples...")
-        X_test_feats = transformer.transform(X_test)
+        import time
+        start_time = time.time()
         
-        # Convert to numpy arrays first
-        import numpy as np
-        print(f"   Converting to numpy arrays...")
-        X_train_feats = np.array(X_train_feats)
-        X_test_feats = np.array(X_test_feats)
+        if featurizer_type == "magpie":
+            transformer = MatminerTransformer(make_magpie_featurizer())
+            print(f"   Featurizing {len(X_train)} training samples...")
+            X_train_feats = transformer.transform(X_train)
+            print(f"   Featurizing {len(X_test)} test samples...")
+            X_test_feats = transformer.transform(X_test)
+            
+            # Convert to numpy arrays
+            import numpy as np
+            X_train_feats = np.array(X_train_feats)
+            X_test_feats = np.array(X_test_feats)
+            
+        elif featurizer_type == "gnn":
+            transformer = make_gnn_featurizer(embedding_dim=32, pooling_strategy="max_mean")
+            print(f"   Featurizing {len(X_train)} training samples...")
+            X_train_feats = transformer.transform(X_train)
+            print(f"   Featurizing {len(X_test)} test samples...")
+            X_test_feats = transformer.transform(X_test)
+            
+        else:
+            raise ValueError(f"Unknown featurizer type: {featurizer_type}")
+        
+        featurization_time = time.time() - start_time
         print(f"✅ Features extracted: {X_train_feats.shape[1]} dimensional")
+        print(f"⏱️  Featurization time: {featurization_time:.2f} seconds")
         
         # Convert to torch tensors
         print(f"   Converting to PyTorch tensors...")

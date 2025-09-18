@@ -5,20 +5,48 @@ from botorch.optim.fit import OptimizationWarning
 
 from src.data_loader import load_formation_energy
 from src.featurizer import MatminerTransformer, make_magpie_featurizer
+from src.gnn_featurizer import GNNTransformer, make_gnn_featurizer
 from src.surrogate import OptimizerParameters, evaluate_model_predictions, plot_prediction_analysis, fit_surrogate, fit_surrogate_with_scaling, select_features
 from src.bo_loop import bayes_optimize
 import torch
+import time
 
 warnings.filterwarnings("ignore", category=OptimizationWarning)
 
 def main():
+    # Configuration for featurizer type
+    featurizer_type = "magpie"  # Options: "magpie", "gnn"
+    # featurizer_type = "gnn"  # Uncomment to test GNN embeddings
+    
+    print(f"🔧 Using featurizer: {featurizer_type}")
+    
     # 1) Load Matbench formation-energy data
     X_train, X_test, y_train, y_test = load_formation_energy()
 
-    # 2) Featurize
-    transformer = MatminerTransformer(make_magpie_featurizer())
-    X_train_feats = transformer.transform(X_train)
-    X_test_feats  = transformer.transform(X_test)
+    # 2) Featurize with timing comparison
+    print(f"\n🧬 Featurizing {len(X_train)} train + {len(X_test)} test samples...")
+    
+    start_time = time.time()
+    if featurizer_type == "magpie":
+        transformer = MatminerTransformer(make_magpie_featurizer())
+        X_train_feats = transformer.transform(X_train)
+        X_test_feats = transformer.transform(X_test)
+        feature_dim = X_train_feats.shape[1]
+        print(f"✅ Magpie features extracted: {feature_dim} dimensions")
+        
+    elif featurizer_type == "gnn":
+        transformer = make_gnn_featurizer(embedding_dim=64, pooling_strategy="max_mean")
+        X_train_feats = transformer.transform(X_train)
+        X_test_feats = transformer.transform(X_test)
+        feature_dim = X_train_feats.shape[1]
+        print(f"✅ GNN features extracted: {feature_dim} dimensions")
+        
+    else:
+        raise ValueError(f"Unknown featurizer type: {featurizer_type}")
+    
+    featurization_time = time.time() - start_time
+    print(f"⏱️  Featurization time: {featurization_time:.2f} seconds")
+    
     # to torch Tensors:
     X_train_t = torch.tensor(X_train_feats, dtype=torch.float32)
     X_test_t  = torch.tensor(X_test_feats, dtype=torch.float32)
