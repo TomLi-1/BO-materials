@@ -13,6 +13,7 @@ import torch
 from typing import List, Union, Optional
 from pymatgen.core import Structure, Composition
 import warnings
+warnings.filterwarnings("ignore")
 
 # Try to import optional GNN dependencies
 try:
@@ -92,9 +93,11 @@ class AtomicEmbeddingLoader:
         # Common atomic properties for embeddings
         from pymatgen.core import Element
         
+        # Use available Element properties that exist in pymatgen
         self.property_names = [
-            'atomic_mass', 'atomic_radius', 'electronegativity',
-            'ionization_energy', 'electron_affinity', 'group', 'row'
+            'atomic_mass', 'atomic_radius', 'ionization_energy', 
+            'electron_affinity', 'group', 'row', 'X', 'Z',
+            'mendeleev_no', 'density_of_solid', 'melting_point'
         ]
         
         # Build property matrix for all elements
@@ -104,10 +107,13 @@ class AtomicEmbeddingLoader:
                 elem = Element.from_Z(z)
                 props = []
                 for prop in self.property_names:
-                    val = getattr(elem, prop, 0)
-                    if val is None:
-                        val = 0
-                    props.append(float(val))
+                    try:
+                        val = getattr(elem, prop, 0)
+                        if val is None or str(val) == 'nan':
+                            val = 0
+                        props.append(float(val))
+                    except (ValueError, TypeError):
+                        props.append(0.0)
                 
                 # Pad or truncate to desired embedding dimension
                 if len(props) < self.embedding_dim:

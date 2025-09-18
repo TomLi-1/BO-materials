@@ -34,7 +34,7 @@ def main():
     # Quick test configuration
     bandgap_target = 1.5
     bandgap_tolerance = 0.2
-    featurizer_type = "magpie"  # Options: "magpie", "gnn"
+    featurizer_type = "gnn"  # Options: "magpie", "gnn"
     # featurizer_type = "gnn"  # Uncomment to test GNN embeddings
     
     print(f"🎯 Target: {bandgap_target} ± {bandgap_tolerance} eV (optimal for solar cells)")
@@ -84,11 +84,14 @@ def main():
             X_test_feats = np.array(X_test_feats)
             
         elif featurizer_type == "gnn":
-            transformer = make_gnn_featurizer(embedding_dim=32, pooling_strategy="max_mean")
+            print(f"   Creating GNN transformer...")
+            transformer = make_gnn_featurizer(embedding_dim=16, pooling_strategy="max")
             print(f"   Featurizing {len(X_train)} training samples...")
             X_train_feats = transformer.transform(X_train)
+            print(f"   ✅ Training featurization complete")
             print(f"   Featurizing {len(X_test)} test samples...")
             X_test_feats = transformer.transform(X_test)
+            print(f"   ✅ Test featurization complete")
             
         else:
             raise ValueError(f"Unknown featurizer type: {featurizer_type}")
@@ -107,6 +110,8 @@ def main():
         
     except Exception as e:
         print(f"❌ Featurization failed: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     # 3) Combine into pool for BO
