@@ -15,14 +15,8 @@ from pymatgen.core import Structure, Composition
 import warnings
 warnings.filterwarnings("ignore")
 
-# Try to import optional GNN dependencies
-try:
-    from matminer.featurizers.structure import SiteStatsFingerprint
-    from matminer.featurizers.site import EwaldSiteEnergy
-    MATMINER_AVAILABLE = True
-except ImportError:
-    MATMINER_AVAILABLE = False
-    warnings.warn("Matminer not fully available. Using fallback embeddings.")
+# Skip problematic matminer imports to avoid YAML compatibility issues
+MATMINER_AVAILABLE = False
 
 try:
     import torch_geometric
@@ -58,16 +52,12 @@ class AtomicEmbeddingLoader:
         """Select the best available embedding method."""
         if TORCH_GEOMETRIC_AVAILABLE:
             return "torch_geometric"
-        elif MATMINER_AVAILABLE:
-            return "matminer_site"
         else:
             return "elemental_properties"
     
     def _initialize_embeddings(self):
         """Initialize the embedding strategy."""
-        if self.method == "matminer_site":
-            self._init_matminer_embeddings()
-        elif self.method == "elemental_properties":
+        if self.method == "elemental_properties":
             self._init_elemental_property_embeddings()
         elif self.method == "torch_geometric":
             self._init_torch_geometric_embeddings()
@@ -75,18 +65,9 @@ class AtomicEmbeddingLoader:
             self._init_onehot_embeddings()
     
     def _init_matminer_embeddings(self):
-        """Initialize matminer-based site embeddings."""
-        if MATMINER_AVAILABLE:
-            try:
-                # Use simple site statistics as embeddings
-                from matminer.featurizers.site import LocalStructuralOrderParams
-                self.site_featurizer = LocalStructuralOrderParams()
-                print("✅ Initialized matminer site-based embeddings")
-            except Exception as e:
-                print(f"⚠️  Matminer site embeddings failed: {e}")
-                self._init_elemental_property_embeddings()
-        else:
-            self._init_elemental_property_embeddings()
+        """Initialize matminer-based site embeddings (disabled due to YAML compatibility)."""
+        print("⚠️  Matminer site embeddings disabled due to PyYAML compatibility issues")
+        self._init_elemental_property_embeddings()
     
     def _init_elemental_property_embeddings(self):
         """Initialize embeddings based on elemental properties."""
