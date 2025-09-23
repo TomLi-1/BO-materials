@@ -6,7 +6,7 @@ from botorch.optim.fit import OptimizationWarning
 from src.data_loader import load_formation_energy
 from src.featurizer import MatminerTransformer, make_magpie_featurizer
 from src.gnn_featurizer import GNNTransformer, make_gnn_featurizer
-from src.surrogate import OptimizerParameters, evaluate_model_predictions, plot_prediction_analysis, fit_surrogate, fit_surrogate_with_scaling, select_features
+from src.surrogate import OptimizerParameters, evaluate_model_predictions, plot_prediction_analysis, fit_surrogate, fit_surrogate_with_scaling, fit_robust_surrogate, evaluate_robust_model, select_features
 from src.bo_loop import bayes_optimize
 import torch
 import time
@@ -18,7 +18,11 @@ def main():
     featurizer_type = "magpie"  # Options: "magpie", "gnn"
     # featurizer_type = "gnn"  # Uncomment to test GNN embeddings
     
+    # Configuration for robust modeling
+    use_robust_modeling = True  # Use robust surrogate to handle high formation energies
+    
     print(f"🔧 Using featurizer: {featurizer_type}")
+    print(f"🔧 Robust modeling: {use_robust_modeling}")
     
     # 1) Load Matbench formation-energy data
     X_train, X_test, y_train, y_test = load_formation_energy()
@@ -157,8 +161,14 @@ def main():
     )
     final_X_fs_torch = torch.tensor(final_X_fs, dtype=torch.float32)
     
-    # Fit final GP model
-    final_gp = fit_surrogate(final_X_fs_torch, data_y)
+    # Fit final GP model with robust option
+    if use_robust_modeling:
+        print(f"🔧 Using robust surrogate modeling...")
+        final_gp, robust_info = fit_robust_surrogate(final_X_fs_torch, data_y)
+    else:
+        print(f"🔧 Using standard surrogate modeling...")
+        final_gp = fit_surrogate(final_X_fs_torch, data_y)
+        robust_info = None
     
     # Create test set from remaining pool (excluding training data)
     # Find indices of training data in the full pool
@@ -178,10 +188,17 @@ def main():
         
         # COMPARISON: Evaluate both reduced features and full Magpie features
         print(f"\n1. REDUCED FEATURES ({params.num_sparsity_feats} features with {params.sparsity_method}):")
-        results_reduced = evaluate_model_predictions(
-            final_gp, X_test_full, y_test, 
-            feat_idx=final_feat_idx, verbose=True
-        )
+        
+        if use_robust_modeling and robust_info is not None:
+            results_reduced = evaluate_robust_model(
+                final_gp, X_test_full, y_test, 
+                robust_info, feat_idx=final_feat_idx, verbose=True
+            )
+        else:
+            results_reduced = evaluate_model_predictions(
+                final_gp, X_test_full, y_test, 
+                feat_idx=final_feat_idx, verbose=True
+            )
         
         print(f"\n2. FULL MAGPIE FEATURES ({X_test_full.shape[1]} features):")
         # Debug: Check data properties
@@ -191,12 +208,19 @@ def main():
         print(f"Test data range: [{X_test_full.min():.3f}, {X_test_full.max():.3f}]")
         
         try:
-            # Fit GP on full features with proper scaling to avoid warnings
-            full_gp, full_scaler = fit_surrogate_with_scaling(data_X, data_y)
-            results_full = evaluate_model_predictions(
-                full_gp, X_test_full, y_test, 
-                feat_idx=None, scaler=full_scaler, verbose=True
-            )
+            # Fit GP on full features with robust handling
+            if use_robust_modeling:
+                full_gp, full_robust_info = fit_robust_surrogate(data_X, data_y)
+                results_full = evaluate_robust_model(
+                    full_gp, X_test_full, y_test, 
+                    full_robust_info, feat_idx=None, verbose=True
+                )
+            else:
+                full_gp, full_scaler = fit_surrogate_with_scaling(data_X, data_y)
+                results_full = evaluate_model_predictions(
+                    full_gp, X_test_full, y_test, 
+                    feat_idx=None, scaler=full_scaler, verbose=True
+                )
         except Exception as e:
             print(f"❌ Error in full Magpie evaluation: {e}")
             print("Falling back to reduced features only...")

@@ -74,7 +74,7 @@ def main():
         return
     
     # 2) Configure and run featurization
-    featurizer_type = config.get('featurizer', {}).get('type', 'magpie')
+    featurizer_type = "gnn"
     print(f"\n🧬 Featurizing with {featurizer_type} descriptors...")
     
     try:

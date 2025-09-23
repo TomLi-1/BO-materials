@@ -50,7 +50,8 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, RobustScaler
+from sklearn.model_selection import train_test_split
 
 def fit_surrogate(train_X: torch.Tensor,
                   train_y: torch.Tensor):
@@ -252,3 +253,181 @@ def plot_prediction_analysis(results: dict, save_path: str = None):
     plt.show()
     
     return fig
+
+
+def fit_robust_surrogate(train_X: torch.Tensor, train_y: torch.Tensor, 
+                        remove_outliers: bool = True, outlier_threshold: float = 3.0):
+    """
+    Fit a robust GP model that handles outliers and extreme values better.
+    
+    Args:
+        train_X: Training features
+        train_y: Training targets (formation energies)
+        remove_outliers: Whether to remove outliers during training
+        outlier_threshold: Z-score threshold for outlier detection
+        
+    Returns:
+        Trained GP model and preprocessing information
+    """
+    print(f"🔧 Fitting robust surrogate model...")
+    
+    # Convert to numpy for preprocessing
+    X_np = train_X.numpy()
+    y_np = train_y.numpy()
+    
+    print(f"   Original data: {len(y_np)} samples")
+    print(f"   Energy range: [{y_np.min():.3f}, {y_np.max():.3f}] eV/atom")
+    
+    # Outlier detection using robust statistics
+    outlier_mask = np.ones(len(y_np), dtype=bool)
+    if remove_outliers:
+        # Use median absolute deviation for outlier detection
+        median_y = np.median(y_np)
+        mad_y = np.median(np.abs(y_np - median_y))
+        
+        if mad_y > 0:  # Avoid division by zero
+            # Robust z-score
+            robust_z_scores = 0.6745 * (y_np - median_y) / mad_y
+            outlier_mask = np.abs(robust_z_scores) <= outlier_threshold
+            
+            outliers_removed = (~outlier_mask).sum()
+            print(f"   Outliers removed: {outliers_removed} ({outliers_removed/len(y_np):.1%})")
+            
+            # Apply outlier mask
+            X_clean = X_np[outlier_mask]
+            y_clean = y_np[outlier_mask]
+        else:
+            X_clean, y_clean = X_np, y_np
+    else:
+        X_clean, y_clean = X_np, y_np
+    
+    print(f"   Clean data: {len(y_clean)} samples")
+    
+    # Robust feature scaling using RobustScaler
+    scaler = RobustScaler()
+    X_scaled = scaler.fit_transform(X_clean)
+    
+    # Convert back to tensors
+    train_X_robust = torch.tensor(X_scaled, dtype=torch.float32)
+    train_y_robust = torch.tensor(y_clean, dtype=torch.float32)
+    
+    # Compute dims
+    feat_dim = train_X_robust.size(-1)
+    output_dim = train_y_robust.unsqueeze(-1).size(-1)
+    
+    # Fit GP with robust preprocessing
+    gp = SingleTaskGP(
+        train_X_robust,
+        train_y_robust.unsqueeze(-1),
+        outcome_transform=Standardize(output_dim),
+    )
+    
+    mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
+    
+    try:
+        fit_gpytorch_mll(mll)
+        print(f"✅ Robust GP training complete")
+    except Exception as e:
+        print(f"⚠️  GP training warning: {e}")
+    
+    # Store preprocessing info
+    preprocessing_info = {
+        'scaler': scaler,
+        'outlier_mask': outlier_mask,
+        'outliers_removed': (~outlier_mask).sum() if remove_outliers else 0,
+        'original_size': len(y_np),
+        'clean_size': len(y_clean)
+    }
+    
+    return gp, preprocessing_info
+
+
+def evaluate_robust_model(gp, X_test: torch.Tensor, y_test: torch.Tensor,
+                         preprocessing_info: dict, feat_idx: np.ndarray = None, 
+                         verbose: bool = True):
+    """
+    Evaluate robust model with proper preprocessing applied to test data.
+    """
+    gp.eval()
+    
+    # Select features if feat_idx provided
+    if feat_idx is not None:
+        X_test_selected = X_test[:, feat_idx]
+    else:
+        X_test_selected = X_test
+    
+    # Apply same robust scaling as training
+    scaler = preprocessing_info['scaler']
+    X_test_np = X_test_selected.numpy()
+    X_test_scaled = scaler.transform(X_test_np)
+    X_test_robust = torch.tensor(X_test_scaled, dtype=torch.float32)
+    
+    # Get predictions
+    with torch.no_grad():
+        posterior = gp.posterior(X_test_robust)
+        y_pred = posterior.mean.squeeze(-1)
+        y_std = posterior.variance.sqrt().squeeze(-1)
+    
+    # Convert to numpy for metrics
+    y_pred_np = y_pred.numpy()
+    y_test_np = y_test.numpy()
+    y_std_np = y_std.numpy()
+    
+    # Calculate metrics
+    mae = mean_absolute_error(y_test_np, y_pred_np)
+    mse = mean_squared_error(y_test_np, y_pred_np)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test_np, y_pred_np)
+    
+    # Analyze performance by energy range
+    if verbose:
+        print(f"\n📊 Robust Model Evaluation:")
+        print(f"MAE:  {mae:.4f} eV/atom")
+        print(f"RMSE: {rmse:.4f} eV/atom")
+        print(f"R²:   {r2:.4f}")
+        print(f"Mean uncertainty: {y_std_np.mean():.4f}")
+        
+        analyze_performance_by_energy_range(y_test_np, y_pred_np, y_std_np)
+    
+    return {
+        'predictions': y_pred_np,
+        'ground_truth': y_test_np,
+        'uncertainty': y_std_np,
+        'mae': mae,
+        'rmse': rmse,
+        'r2': r2,
+        'preprocessing_info': preprocessing_info
+    }
+
+
+def analyze_performance_by_energy_range(y_true, y_pred, y_std):
+    """Analyze model performance across different formation energy ranges."""
+    print(f"\n📈 Performance by formation energy range:")
+    
+    # Define energy ranges based on thermodynamic stability
+    ranges = [
+        ("Very Stable", -np.inf, -2.0),
+        ("Stable", -2.0, -0.5), 
+        ("Marginally Stable", -0.5, 0.0),
+        ("Unstable", 0.0, 1.0),
+        ("Very Unstable", 1.0, np.inf)
+    ]
+    
+    for name, min_e, max_e in ranges:
+        mask = (y_true >= min_e) & (y_true < max_e)
+        if mask.sum() == 0:
+            continue
+            
+        y_range = y_true[mask]
+        pred_range = y_pred[mask]
+        std_range = y_std[mask]
+        
+        mae_range = np.mean(np.abs(y_range - pred_range))
+        rmse_range = np.sqrt(np.mean((y_range - pred_range)**2))
+        avg_uncertainty = np.mean(std_range)
+        
+        print(f"   {name:16} ({mask.sum():5d}): MAE={mae_range:.3f}, RMSE={rmse_range:.3f}, σ={avg_uncertainty:.3f}")
+        
+        # Flag problematic ranges
+        if mae_range > 1.0:
+            print(f"      ⚠️  High error in {name} range!")
