@@ -1,0 +1,17 @@
+dataset:
+  name: matbench_expt_gap
+  target: "e_form"      # formation energy per atom
+
+featurizer:
+  magpie: true
+  ovito:  false         # toggle other featurizers
+
+model:
+  type: saas_gp         
+  seed:  42
+
+bo:
+  init_points: 10
+  n_iterations: 50
+  acquisition: "EI"     # “EI”, “UCB”
+  batch_size: 1

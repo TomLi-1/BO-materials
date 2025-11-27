@@ -1,7 +1,6 @@
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import warnings
-import random
 from botorch.optim.fit import OptimizationWarning
 
 from src.data_loader import load_formation_energy
@@ -102,25 +101,15 @@ def main():
         params.baseline_feature_idx = feature_dim - 1
         params.use_baseline_residual = True
 
-    # 5) Fix random seeds for reproducibility before any sampling
-    torch.manual_seed(params.seed)
-    np.random.seed(params.seed)
-    random.seed(params.seed)
-
-    # 6) Pick an initial random seed set (now deterministic given the seed)
-    generator = torch.Generator().manual_seed(params.seed)
-    init_idx = torch.randperm(len(X_pool), generator=generator)[: params.initialization_budget]
+    # 5) Pick an initial random seed set
+    init_idx = torch.randperm(len(X_pool))[: params.initialization_budget]
     X_init   = X_pool[init_idx]
     y_init   = y_pool[init_idx]
-    pool_mask = torch.ones(len(X_pool), dtype=torch.bool)
-    pool_mask[init_idx] = False
-    X_pool_remaining = X_pool[pool_mask]
-    y_pool_remaining = y_pool[pool_mask]
 
-    # 7) Run BO
+    # 6) Run BO
     data_X, data_y = bayes_optimize(
         X_init, y_init,
-        X_pool_remaining, y_pool_remaining,
+        X_pool, y_pool,
         params
     )
 
@@ -199,8 +188,7 @@ def main():
         data_X.numpy(),
         data_y.numpy(), 
         method=params.sparsity_method,
-        k=params.num_sparsity_feats,
-        random_state=params.seed
+        k=params.num_sparsity_feats
     )
     if params.baseline_feature_idx is not None and params.baseline_feature_idx not in final_feat_idx:
         final_feat_idx = np.concatenate([final_feat_idx, [params.baseline_feature_idx]])

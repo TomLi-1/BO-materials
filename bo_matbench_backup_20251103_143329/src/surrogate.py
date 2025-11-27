@@ -25,8 +25,7 @@ class OptimizerParameters:
 def select_features(X: np.ndarray,
                     y: np.ndarray,
                     method: str,
-                    k: int,
-                    random_state: Optional[int] = None):
+                    k: int):
     """
     X: (n_samples, n_features)
     y: (n_samples,)
@@ -35,10 +34,10 @@ def select_features(X: np.ndarray,
     returns: X_sel with only k columns
     """
     if method == "MI":
-        mi = mutual_info_regression(X, y, random_state=random_state)
+        mi = mutual_info_regression(X, y, random_state=0)
         idx = np.argsort(mi)[-k:]
     elif method == "LASSO":
-        model = Lasso(alpha=1e-3, random_state=random_state).fit(X, y)
+        model = Lasso(alpha=1e-3, random_state=0).fit(X, y)
         coef = np.abs(model.coef_)
         idx  = np.argsort(coef)[-k:]
     else:  # NONE

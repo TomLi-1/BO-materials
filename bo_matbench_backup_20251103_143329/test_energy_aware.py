@@ -7,7 +7,6 @@ Compares performance on formation energy prediction, especially at high energies
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import warnings
-import random
 from botorch.optim.fit import OptimizationWarning
 
 from src.data_loader import load_formation_energy
@@ -81,28 +80,18 @@ def main():
         total_sample_budget=100,  # Reasonable for testing
     )
     
-    torch.manual_seed(params.seed)
-    np.random.seed(params.seed)
-    random.seed(params.seed)
-    generator = torch.Generator().manual_seed(params.seed)
-    init_idx = torch.randperm(len(X_pool), generator=generator)[:params.initialization_budget]
+    init_idx = torch.randperm(len(X_pool))[:params.initialization_budget]
     X_init = X_pool[init_idx]
     y_init = y_pool[init_idx]
     
-    pool_mask = torch.ones(len(X_pool), dtype=torch.bool)
-    pool_mask[init_idx] = False
-    X_pool_remaining = X_pool[pool_mask]
-    y_pool_remaining = y_pool[pool_mask]
-    
-    data_X, data_y = bayes_optimize(X_init, y_init, X_pool_remaining, y_pool_remaining, params)
+    data_X, data_y = bayes_optimize(X_init, y_init, X_pool, y_pool, params)
     
     print(f"✅ BO complete! Best found: {data_y.min().item():.4f} eV/atom")
     
     # 5) Feature selection
     final_X_fs, final_feat_idx = select_features(
         data_X.numpy(), data_y.numpy(),
-        method=params.sparsity_method, k=params.num_sparsity_feats,
-        random_state=params.seed
+        method=params.sparsity_method, k=params.num_sparsity_feats
     )
     final_X_fs_torch = torch.tensor(final_X_fs, dtype=torch.float32)
     

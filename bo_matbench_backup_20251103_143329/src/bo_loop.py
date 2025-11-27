@@ -1,5 +1,3 @@
-import random
-
 import numpy as np
 import torch
 from surrogate import (fit_surrogate, make_acquisition, OptimizerParameters, select_features)
@@ -17,11 +15,6 @@ def bayes_optimize(
     y_pool: torch.Tensor,
     params: OptimizerParameters,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    # ensure reproducible behavior across numpy, torch, and Python RNGs
-    torch.manual_seed(params.seed)
-    np.random.seed(params.seed)
-    random.seed(params.seed)
-
     # convert y_init to a FloatTensor
     y0 = torch.as_tensor(y_init, dtype=torch.float32)
 
@@ -37,7 +30,6 @@ def bayes_optimize(
             data_y.numpy(),
             method=params.sparsity_method,
             k=params.num_sparsity_feats,
-            random_state=params.seed,
         )
 
         if params.baseline_feature_idx is not None and params.baseline_feature_idx not in feat_idx:
@@ -94,6 +86,6 @@ def bayes_optimize(
         data_X = torch.cat([data_X, new_Xf], dim=0)
         data_y = torch.cat([data_y, new_y],  dim=0)
 
-        print(f"Iter {it:02d} — best e_form = {data_y.min():.4f}")
+        print(f"Iter {it:02d} — best e_form = {data_y.max():.4f}")
 
     return data_X, data_y

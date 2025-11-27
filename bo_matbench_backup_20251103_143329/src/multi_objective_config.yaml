@@ -24,7 +24,7 @@ bandgap_target:
 
 # Featurization
 featurizer:
-  type: "gnn"  # Options: "magpie", "gnn"
+  type: "magpie"  # Options: "magpie", "gnn"
   
   # Magpie configuration
   magpie:
