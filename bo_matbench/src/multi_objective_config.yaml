@@ -24,13 +24,23 @@ bandgap_target:
 
 # Featurization
 featurizer:
-  composition_features:
-    magpie: true
-    matscholar: false
-    
-  structure_features:  # If structures available
-    sine_coulomb_matrix: false
-    orbital_field_matrix: false
+  type: "gnn"  # Options: "magpie", "gnn"
+  
+  # Magpie configuration
+  magpie:
+    composition_features:
+      magpie: true
+      matscholar: false
+    structure_features:  # If structures available
+      sine_coulomb_matrix: false
+      orbital_field_matrix: false
+  
+  # GNN configuration
+  gnn:
+    embedding_dim: 64
+    embedding_method: "auto"  # "auto", "elemental_properties", "onehot"
+    pooling_strategy: "max_mean"  # "max", "mean", "sum", "max_mean"
+    include_stats: true
     
 # Multi-objective BO parameters
 bo:

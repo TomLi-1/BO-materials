@@ -1,24 +1,85 @@
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import warnings
+import random
 from botorch.optim.fit import OptimizationWarning
 
 from src.data_loader import load_formation_energy
 from src.featurizer import MatminerTransformer, make_magpie_featurizer
+from src.gnn_featurizer import GNNTransformer, make_gnn_featurizer
+from src.alignn_featurizer import make_alignn_featurizer
 from src.surrogate import OptimizerParameters, evaluate_model_predictions, plot_prediction_analysis, fit_surrogate, fit_surrogate_with_scaling, select_features
 from src.bo_loop import bayes_optimize
 import torch
+import time
+import numpy as np
 
 warnings.filterwarnings("ignore", category=OptimizationWarning)
 
 def main():
+    # Configuration for featurizer type
+    featurizer_type = "alignn"  # Options: "magpie", "gnn", "alignn"
+    # featurizer_type = "gnn"  # Uncomment to test GNN embeddings
+    
+    print(f"🔧 Using featurizer: {featurizer_type}")
+    
     # 1) Load Matbench formation-energy data
     X_train, X_test, y_train, y_test = load_formation_energy()
 
-    # 2) Featurize
-    transformer = MatminerTransformer(make_magpie_featurizer())
-    X_train_feats = transformer.transform(X_train)
-    X_test_feats  = transformer.transform(X_test)
+    # 2) Featurize with timing comparison
+    print(f"\n🧬 Featurizing {len(X_train)} train + {len(X_test)} test samples...")
+    
+    start_time = time.time()
+    alignn_baseline_train = None
+    alignn_baseline_test = None
+
+    if featurizer_type == "magpie":
+        transformer = MatminerTransformer(make_magpie_featurizer())
+        X_train_feats = np.array(transformer.transform(X_train))
+        X_test_feats = np.array(transformer.transform(X_test))
+        feature_dim = X_train_feats.shape[1]
+        print(f"✅ Magpie features extracted: {feature_dim} dimensions")
+        
+    elif featurizer_type == "gnn":
+        transformer = make_gnn_featurizer(embedding_dim=64, pooling_strategy="max_mean")
+        X_train_feats = np.array(transformer.transform(X_train))
+        X_test_feats = np.array(transformer.transform(X_test))
+        feature_dim = X_train_feats.shape[1]
+        print(f"✅ GNN features extracted: {feature_dim} dimensions")
+
+    elif featurizer_type == "alignn":
+        transformer = make_alignn_featurizer(batch_size=8)
+        X_train_feats = np.asarray(transformer.transform(X_train), dtype=np.float32)
+        X_test_feats = np.asarray(transformer.transform(X_test), dtype=np.float32)
+        feature_dim = X_train_feats.shape[1]
+        source = "ALIGNN embeddings" if transformer.model is not None else "Magpie fallback"
+        print(f"✅ ALIGNN features extracted: {feature_dim} dimensions ({source})")
+
+        if transformer.is_alignn_active():
+            try:
+                print("📈 Capturing ALIGNN baseline predictions for feature augmentation...")
+                alignn_baseline_train = np.asarray(
+                    transformer.predict(list(X_train)), dtype=np.float32
+                ).reshape(-1, 1)
+                alignn_baseline_test = np.asarray(
+                    transformer.predict(list(X_test)), dtype=np.float32
+                ).reshape(-1, 1)
+
+                X_train_feats = np.concatenate([X_train_feats, alignn_baseline_train], axis=1)
+                X_test_feats = np.concatenate([X_test_feats, alignn_baseline_test], axis=1)
+                feature_dim = X_train_feats.shape[1]
+                print(f"✅ ALIGNN baseline channel appended — new feature dim: {feature_dim}")
+            except Exception as exc:
+                alignn_baseline_train = None
+                alignn_baseline_test = None
+                print(f"⚠️  Failed to fetch ALIGNN baseline predictions ({exc}); continuing without augmentation.")
+        
+    else:
+        raise ValueError(f"Unknown featurizer type: {featurizer_type}")
+    
+    featurization_time = time.time() - start_time
+    print(f"⏱️  Featurization time: {featurization_time:.2f} seconds")
+    
     # to torch Tensors:
     X_train_t = torch.tensor(X_train_feats, dtype=torch.float32)
     X_test_t  = torch.tensor(X_test_feats, dtype=torch.float32)
@@ -37,16 +98,29 @@ def main():
         initialization_budget=10,
         total_sample_budget=200,
     )
+    if alignn_baseline_train is not None:
+        params.baseline_feature_idx = feature_dim - 1
+        params.use_baseline_residual = True
 
-    # 5) Pick an initial random seed set
-    init_idx = torch.randperm(len(X_pool))[: params.initialization_budget]
+    # 5) Fix random seeds for reproducibility before any sampling
+    torch.manual_seed(params.seed)
+    np.random.seed(params.seed)
+    random.seed(params.seed)
+
+    # 6) Pick an initial random seed set (now deterministic given the seed)
+    generator = torch.Generator().manual_seed(params.seed)
+    init_idx = torch.randperm(len(X_pool), generator=generator)[: params.initialization_budget]
     X_init   = X_pool[init_idx]
     y_init   = y_pool[init_idx]
+    pool_mask = torch.ones(len(X_pool), dtype=torch.bool)
+    pool_mask[init_idx] = False
+    X_pool_remaining = X_pool[pool_mask]
+    y_pool_remaining = y_pool[pool_mask]
 
-    # 6) Run BO
+    # 7) Run BO
     data_X, data_y = bayes_optimize(
         X_init, y_init,
-        X_pool, y_pool,
+        X_pool_remaining, y_pool_remaining,
         params
     )
 
@@ -125,12 +199,27 @@ def main():
         data_X.numpy(),
         data_y.numpy(), 
         method=params.sparsity_method,
-        k=params.num_sparsity_feats
+        k=params.num_sparsity_feats,
+        random_state=params.seed
     )
+    if params.baseline_feature_idx is not None and params.baseline_feature_idx not in final_feat_idx:
+        final_feat_idx = np.concatenate([final_feat_idx, [params.baseline_feature_idx]])
+        final_X_fs = data_X.numpy()[:, final_feat_idx]
     final_X_fs_torch = torch.tensor(final_X_fs, dtype=torch.float32)
+    if params.baseline_feature_idx is not None and params.use_baseline_residual:
+        idx_list = final_feat_idx.tolist()
+        if params.baseline_feature_idx in idx_list:
+            baseline_pos = idx_list.index(params.baseline_feature_idx)
+            baseline_vals = torch.tensor(final_X_fs[:, baseline_pos], dtype=torch.float32)
+            final_targets = data_y - baseline_vals
+        else:
+            final_targets = data_y
+    else:
+        final_targets = data_y
     
     # Fit final GP model
-    final_gp = fit_surrogate(final_X_fs_torch, data_y)
+    print(f"🔧 Using standard surrogate modeling...")
+    final_gp = fit_surrogate(final_X_fs_torch, final_targets)
     
     # Create test set from remaining pool (excluding training data)
     # Find indices of training data in the full pool
@@ -150,9 +239,12 @@ def main():
         
         # COMPARISON: Evaluate both reduced features and full Magpie features
         print(f"\n1. REDUCED FEATURES ({params.num_sparsity_feats} features with {params.sparsity_method}):")
+        
         results_reduced = evaluate_model_predictions(
             final_gp, X_test_full, y_test, 
-            feat_idx=final_feat_idx, verbose=True
+            feat_idx=final_feat_idx, verbose=True,
+            baseline_idx=params.baseline_feature_idx,
+            residual_mode=params.use_baseline_residual
         )
         
         print(f"\n2. FULL MAGPIE FEATURES ({X_test_full.shape[1]} features):")
@@ -163,11 +255,18 @@ def main():
         print(f"Test data range: [{X_test_full.min():.3f}, {X_test_full.max():.3f}]")
         
         try:
-            # Fit GP on full features with proper scaling to avoid warnings
-            full_gp, full_scaler = fit_surrogate_with_scaling(data_X, data_y)
+            # Fit GP on full features
+            if params.baseline_feature_idx is not None and params.use_baseline_residual:
+                baseline_full = data_X[:, params.baseline_feature_idx]
+                full_targets = data_y - baseline_full
+            else:
+                full_targets = data_y
+            full_gp, full_scaler = fit_surrogate_with_scaling(data_X, full_targets)
             results_full = evaluate_model_predictions(
                 full_gp, X_test_full, y_test, 
-                feat_idx=None, scaler=full_scaler, verbose=True
+                feat_idx=None, scaler=full_scaler, verbose=True,
+                baseline_idx=params.baseline_feature_idx,
+                residual_mode=params.use_baseline_residual
             )
         except Exception as e:
             print(f"❌ Error in full Magpie evaluation: {e}")

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
+import warnings
 
 import numpy as np
 from sklearn.feature_selection import mutual_info_regression
@@ -17,12 +18,15 @@ class OptimizerParameters:
     total_sample_budget:int  = 200
     initialization_budget:int= 10
     seed:               int  = 42
+    baseline_feature_idx: Optional[int] = None
+    use_baseline_residual: bool = False
 
 
 def select_features(X: np.ndarray,
                     y: np.ndarray,
                     method: str,
-                    k: int):
+                    k: int,
+                    random_state: Optional[int] = None):
     """
     X: (n_samples, n_features)
     y: (n_samples,)
@@ -31,10 +35,10 @@ def select_features(X: np.ndarray,
     returns: X_sel with only k columns
     """
     if method == "MI":
-        mi = mutual_info_regression(X, y, random_state=0)
+        mi = mutual_info_regression(X, y, random_state=random_state)
         idx = np.argsort(mi)[-k:]
     elif method == "LASSO":
-        model = Lasso(alpha=1e-3, random_state=0).fit(X, y)
+        model = Lasso(alpha=1e-3, random_state=random_state).fit(X, y)
         coef = np.abs(model.coef_)
         idx  = np.argsort(coef)[-k:]
     else:  # NONE
@@ -51,6 +55,7 @@ from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
 
 def fit_surrogate(train_X: torch.Tensor,
                   train_y: torch.Tensor):
@@ -119,7 +124,9 @@ def make_acquisition(gp, best_f: torch.Tensor, acq_fun: str, minimize: bool = Fa
 
 
 def evaluate_model_predictions(gp, X_test: torch.Tensor, y_test: torch.Tensor, 
-                              feat_idx: np.ndarray = None, scaler=None, verbose: bool = True):
+                              feat_idx: np.ndarray = None, scaler=None, verbose: bool = True,
+                              baseline_idx: Optional[int] = None,
+                              residual_mode: bool = False):
     """
     Evaluate GP model predictions against ground truth values
     
@@ -137,13 +144,22 @@ def evaluate_model_predictions(gp, X_test: torch.Tensor, y_test: torch.Tensor,
     
     # Select features if feat_idx provided
     if feat_idx is not None:
-        X_test_selected = X_test[:, feat_idx]
+        feat_idx_list = feat_idx.tolist()
+        X_test_selected = X_test[:, feat_idx_list]
     else:
+        feat_idx_list = None
         X_test_selected = X_test
-    
+    baseline_values_np = None
+    if baseline_idx is not None:
+        if feat_idx_list is not None and baseline_idx in feat_idx_list:
+            baseline_pos = feat_idx_list.index(baseline_idx)
+            baseline_values_np = X_test_selected[:, baseline_pos].detach().cpu().numpy()
+        elif feat_idx_list is None:
+            baseline_values_np = X_test[:, baseline_idx].detach().cpu().numpy()
+
     # Apply scaling if scaler provided
     if scaler is not None:
-        X_test_np = X_test_selected.numpy()
+        X_test_np = X_test_selected.detach().cpu().numpy()
         X_test_scaled = scaler.transform(X_test_np)
         X_test_selected = torch.tensor(X_test_scaled, dtype=torch.float32)
     
@@ -152,12 +168,18 @@ def evaluate_model_predictions(gp, X_test: torch.Tensor, y_test: torch.Tensor,
         posterior = gp.posterior(X_test_selected)
         y_pred = posterior.mean.squeeze(-1)
         y_std = posterior.variance.sqrt().squeeze(-1)
+
+    y_pred_np = y_pred.detach().cpu().numpy()
+    y_test_np = y_test.detach().cpu().numpy()
+    y_std_np = y_std.detach().cpu().numpy()
+
+    if residual_mode:
+        if baseline_values_np is None:
+            warnings.warn("Residual mode enabled but baseline feature not found; skipping baseline adjustment.")
+        else:
+            y_pred_np = y_pred_np + baseline_values_np
     
     # Convert to numpy for metrics
-    y_pred_np = y_pred.numpy()
-    y_test_np = y_test.numpy()
-    y_std_np = y_std.numpy()
-    
     # Calculate metrics
     mae = mean_absolute_error(y_test_np, y_pred_np)
     mse = mean_squared_error(y_test_np, y_pred_np)
@@ -177,7 +199,8 @@ def evaluate_model_predictions(gp, X_test: torch.Tensor, y_test: torch.Tensor,
         'uncertainty': y_std_np,
         'mae': mae,
         'rmse': rmse,
-        'r2': r2
+        'r2': r2,
+        'baseline': baseline_values_np
     }
 
 
